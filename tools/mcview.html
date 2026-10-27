@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MC 存档 → 网页模型</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0f1216; color: #e8edf2;
+    font: 14px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+  #app { position: fixed; inset: 0; }
+  .bar { position: fixed; left: 16px; top: 14px; display: flex; gap: 10px; align-items: center;
+    background: rgba(18,22,28,.82); padding: 10px 12px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,.08); backdrop-filter: blur(8px); }
+  .bar input[type=file] { width: 210px; font-size: 12px; }
+  .stats { position: fixed; left: 16px; bottom: 14px; font-size: 12px; color: #9fb0c0;
+    background: rgba(18,22,28,.8); padding: 8px 10px; border-radius: 8px; }
+  button { background: #1f6feb; border: 0; color: #fff; padding: 7px 12px; border-radius: 7px;
+    font-size: 13px; cursor: pointer; }
+  button.ghost { background: rgba(255,255,255,.08); }
+  .hint { position: fixed; inset: 0; display: grid; place-content: center; text-align: center;
+    color: #8fa1b3; pointer-events: none; }
+  .hint b { color: #e8edf2; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="bar">
+  <input type="file" id="file" accept=".mcb">
+  <button class="ghost" id="reset">复位视角</button>
+  <button class="ghost" id="wire">线框</button>
+</div>
+<div class="stats" id="stats">把 .mcb 拖进来，或点上面的选择文件</div>
+<div class="hint" id="hint"><div><b>MC 存档 → 网页模型</b><br>先用 <code>tools/mca2web.py</code> 转换 .mca，再打开这里</div></div>
+
+<script type="importmap">
+{ "imports": { "three": "../vendor/three.module.js", "three/addons/": "../vendor/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/OrbitControls.js';
+
+const app = document.getElementById('app');
+const statsEl = document.getElementById('stats');
+const hint = document.getElementById('hint');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f1216);
+scene.fog = new THREE.Fog(0x0f1216, 600, 2600);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.5, 8000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI * 0.495;
+controls.minDistance = 4;
+controls.maxDistance = 6000;
+
+const hemi = new THREE.HemisphereLight(0xdfeaf6, 0x30281f, 0.85);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff2df, 2.1);
+sun.position.set(320, 520, 240);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+const cam = sun.shadow.camera;
+cam.left = -700; cam.right = 700; cam.top = 700; cam.bottom = -700; cam.far = 3000;
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0xffffff, 0.18));
+
+const grid = new THREE.GridHelper(4000, 80, 0x2a3340, 0x1c232c);
+grid.position.y = -0.02;
+scene.add(grid);
+
+let current = null;
+let wire = false;
+
+function clear() {
+  if (!current) return;
+  scene.remove(current);
+  current.geometry?.dispose();
+  current = null;
+}
+
+function loadBuffer(buf) {
+  const view = new DataView(buf);
+  const bytes = new Uint8Array(buf);
+  const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+  if (magic !== 'MCB1') throw new Error('不是 .mcb 文件');
+  const headLen = view.getUint32(4);
+  const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, headLen)));
+  let off = 8 + headLen;
+  const n = head.count;
+  const geo = new THREE.BoxGeometry(1, 1, 1);
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0.02, vertexColors: false });
+  const inst = new THREE.InstancedMesh(geo, mat, n);
+  inst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+  const m = new THREE.Matrix4();
+  const c = new THREE.Color();
+  const [ox, oy, oz] = head.origin;
+  for (let i = 0; i < n; i++) {
+    const x = view.getUint16(off), y = view.getUint16(off + 2), z = view.getUint16(off + 4);
+    const w = bytes[off + 6], h = bytes[off + 7], d = bytes[off + 8];
+    const r = bytes[off + 9], g = bytes[off + 10], b = bytes[off + 11];
+    off += 12;
+    m.makeScale(w, h, d);
+    m.setPosition(x + ox + w / 2, y + oy + h / 2, z + oz + d / 2);
+    inst.setMatrixAt(i, m);
+    c.setRGB(r / 255, g / 255, b / 255).convertSRGBToLinear();
+    inst.setColorAt(i, c);
+  }
+  inst.instanceMatrix.needsUpdate = true;
+  inst.instanceColor.needsUpdate = true;
+  inst.castShadow = true;
+  inst.receiveShadow = true;
+  inst.rotation.x = 0;
+
+  clear();
+  current = inst;
+  scene.add(inst);
+
+  const box = new THREE.Box3().setFromObject(inst);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const span = Math.max(size.x, size.y, size.z);
+  camera.position.set(center.x + span * 0.75, center.y + span * 0.85, center.z + span * 1.05);
+  controls.target.copy(center);
+  controls.update();
+  const sh = sun.shadow.camera;
+  sh.left = -span * 0.7; sh.right = span * 0.7; sh.top = span * 0.7; sh.bottom = -span * 0.7;
+  sh.far = span * 4;
+  sh.updateProjectionMatrix();
+  sun.position.set(center.x + span * 0.6, center.y + span * 1.1, center.z + span * 0.5);
+
+  statsEl.textContent = `${head.count.toLocaleString()} 个盒子 · `
+    + `${size.x.toFixed(0)}×${size.z.toFixed(0)} m 占地 · 高 ${size.y.toFixed(0)} m · `
+    + `${head.chunks || '?'} 区块 · 源 ${head.source || ''}`;
+  hint.style.display = 'none';
+}
+
+document.getElementById('file').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try { loadBuffer(await f.arrayBuffer()); }
+  catch (err) { statsEl.textContent = '加载失败：' + err.message; }
+});
+
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', async (e) => {
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if (!f) return;
+  try { loadBuffer(await f.arrayBuffer()); }
+  catch (err) { statsEl.textContent = '加载失败：' + err.message; }
+});
+
+document.getElementById('reset').onclick = () => {
+  if (current) loadBuffer(window.__lastBuf);
+};
+document.getElementById('wire').onclick = () => {
+  wire = !wire;
+  if (current) current.material.wireframe = wire;
+};
+
+const params = new URLSearchParams(location.search);
+const file = params.get('file');
+if (file) {
+  fetch(file).then((r) => r.arrayBuffer()).then((b) => {
+    window.__lastBuf = b;
+    loadBuffer(b);
+  }).catch((err) => { statsEl.textContent = '加载失败：' + err.message; });
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

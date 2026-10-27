@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>重庆大学 A 区 · 三维校园地图</title>
+<meta name="description" content="在浏览器中漫游重庆大学沙坪坝校区（A 区）：主教学楼、民主湖、理工馆与老校区的红砖建筑，支持昼夜光影、地点搜索与第一人称步行。" />
+<link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="./src/style.css" />
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/" } }
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<!-- 顶部条 -->
+<header id="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 7l9 5 9-5M12 12v10" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+    <div>
+      <h1>重庆大学 A 区</h1>
+      <p>沙坪坝老校区 · 三维校园地图</p>
+    </div>
+  </div>
+  <div class="top-actions">
+    <button id="btn-home" title="回到全景">全景</button>
+    <button id="btn-top" title="切换正俯视">俯视</button>
+    <button id="btn-time" title="切换光影">日间</button>
+    <button id="btn-tour" title="沿经典路线自动巡游">导览</button>
+    <button id="btn-layer" title="显示/隐藏图层">图层</button>
+    <button id="btn-walk" title="第一人称步行漫游">漫游</button>
+    <button id="btn-shot" title="导出当前画面">截图</button>
+    <button id="btn-about" title="关于本图">关于</button>
+  </div>
+</header>
+
+<!-- 左侧面板 -->
+<aside id="panel">
+  <div class="search-row">
+    <input id="search" type="search" placeholder="搜索建筑、湖、运动场…" autocomplete="off" />
+    <button id="panel-fold" title="收起面板">−</button>
+  </div>
+  <div id="list"></div>
+  <div class="panel-foot">
+    <span id="stat"></span>
+  </div>
+</aside>
+
+<!-- 信息卡 -->
+<section id="info" class="hidden">
+  <button id="info-close" title="关闭">×</button>
+  <h2 id="info-title"></h2>
+  <div id="info-tags"></div>
+  <p id="info-desc"></p>
+  <dl id="info-facts"></dl>
+</section>
+
+<!-- 图层 -->
+<div id="layers" class="hidden">
+  <label><input type="checkbox" data-layer="buildings" checked /> 建筑</label>
+  <label><input type="checkbox" data-layer="roads" checked /> 道路</label>
+  <label><input type="checkbox" data-layer="trees" checked /> 树木</label>
+  <label><input type="checkbox" data-layer="labels" checked /> 标签</label>
+  <label><input type="checkbox" data-layer="water" checked /> 水面</label>
+  <label><input type="checkbox" data-layer="pitch" checked /> 运动场</label>
+  <label><input type="checkbox" data-layer="sat" /> 卫星底图</label>
+</div>
+
+<!-- 罗盘 / 比例尺 -->
+<div id="compass" title="点击回正北">
+  <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-opacity=".35"/><path id="needle" d="M20 7l5 13-5-3-5 3z" fill="currentColor"/></svg>
+  <span>北</span>
+</div>
+<div id="scalebar"><i></i><span>100 m</span></div>
+
+<!-- 小地图 -->
+<canvas id="minimap" width="180" height="180"></canvas>
+
+<!-- 漫游提示 -->
+<div id="walkhud" class="hidden">
+  <div class="wh-title">步行漫游</div>
+  <div class="wh-keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动 · <kbd>Shift</kbd> 加速 · <kbd>鼠标</kbd> 转向 · <kbd>Esc</kbd> 退出</div>
+  <div class="wh-pos"></div>
+</div>
+
+<!-- 载入 / 关于 -->
+<div id="loader"><div class="spin"></div><span>正在加载校园数据…</span></div>
+<div id="about" class="hidden">
+  <div class="about-card">
+    <h2>关于这张图</h2>
+    <p>重庆大学沙坪坝校区（A 区）的三维示意地图。建筑轮廓、道路、水面与运动场地来自 OpenStreetMap（ODbL 1.0），经本地脚本投影为米制坐标后实时挤出三维几何；高度按层数或公开资料估算，细节（女儿墙、屋顶机组、树木）为程序生成。</p>
+    <p>地形为 <b>SRTM 1 弧秒（约 30 m）</b>高程数据，重采样到 10 m 网格后实时生成：校园内地表从北侧工学院一带的约 285 m 降到南侧学生宿舍、美视剧场附近的约 245 m，<b>高差约 32 m</b>，因此主教学楼台阶地、图书馆前的坡、通往民主湖的下坡都按真实高差起伏。所有建筑、道路、树木与水面都按采样高程落地。</p>
+    <p>鼠标左键拖动旋转、滚轮缩放、右键平移；点击建筑查看介绍。手机单指旋转、双指缩放平移。</p>
+    <p><b>关于「像素重大」（CQUcraft）</b>：重庆大学 A 区的方块还原项目由 CQUcraft 组织十余名同学在做，2026 年 3 月开工，已完成 <b>主教学楼、第五教学楼、第八教学楼、综合实验大楼、正大门、钟塔、信息中心</b>，正在推进图书馆、思群广场、团结广场、办公楼。他们的成果是 Minecraft 里的方块建筑，可在
+      <a href="https://map.cqumc.cn/voxel-cqu/" target="_blank" rel="noopener">在线地图</a> 或服务器 <code>mc.cqumc.cn</code>（1.21.11+，`/server voxel-cqu`）里游览，
+      项目介绍与加入方式见 <a href="https://www.cqumc.cn" target="_blank" rel="noopener">cqumc.cn</a>。
+      本页面与他们<b>没有数据交换</b>：他们的地图由雷池 WAF 保护、瓦片不对外公开，我拿不到方块几何，所以这里仍是 OSM 轮廓 + SRTM 地形的独立重建。</p>
+    <p class="dim">这是一个独立制作的非官方项目，与重庆大学及 CQUcraft 均无隶属关系。数据可核对的地方以实测为准，欢迎提 Issue 修正。</p>
+    <button id="about-close">知道了</button>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
